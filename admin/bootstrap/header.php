@@ -155,6 +155,7 @@ if ($page != 'login')
 								<ul class="dropdown-menu" role="menu" aria-labelledby="dLabel">
 									<li class="nav-header">Tools</li>
 									<li><a tabindex="-1" href="utilitiesrcontool.php"><i class="icon-globe <?php echo formatIcon(); ?>"></i>&nbsp;Server RCON Tool</a></li>
+									<li><a tabindex="-1" href="utilitieswebftp.php"><i class="icon-file <?php echo formatIcon(); ?>"></i>&nbsp;Server WebFTP</a></li>
 									<li><a tabindex="-1" href="utilitieslog.php"><i class="icon-list-alt <?php echo formatIcon(); ?>"></i>&nbsp;Activity Logs</a></li>
 									<li><a tabindex="-1" href="utilitiesoptimize.php"><i class="icon-wrench <?php echo formatIcon(); ?>"></i>&nbsp;Optimize Database</a></li>
 									<li><a tabindex="-1" href="utilitiesversion.php"><i class="icon-certificate <?php echo formatIcon(); ?>"></i>&nbsp;Version Check</a></li>
