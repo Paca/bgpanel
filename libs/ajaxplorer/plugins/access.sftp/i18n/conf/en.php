@@ -19,15 +19,17 @@
 * The latest code can be found at <http://www.ajaxplorer.info/>.
 */
 $mess=array(
-"FTP over SSH" => "FTP over SSH",
-"Access a remote server filesystem using FTP via SSH server. Handy for working around permissions problems." => "Access a remote server filesystem using FTP via SSH server. Handy for working around permissions problems.",
-"Server URL" => "Server URL",
-"Path to remote sftp server" => "Path to remote sftp server",
-"Port number" => "Port number",
-"Port to SSH server" => "Port to SSH server",
+"SSH File Transfer Protocol (SFTP)" => "SSH File Transfer Protocol (SFTP)",
+"The SSH File Transfer Protocol is a network protocol that provides file access, file transfer, and file management functionalities over SSH2." => "The SSH File Transfer Protocol is a network protocol that provides file access, file transfer, and file management functionalities over SSH2.",
+"Host" => "Host",
+"SFTP Host to connect to" => "SFTP Host to connect to",
+"Port" => "Port",
+"SFTP Host port" => "SFTP Host port",
+"User" => "User",
+"SFTP user" => "SFTP user",
+"Password" => "Password",
+"SFTP password" => "SFTP password",
 "Path" => "Path",
-"Real path to the folder on the server" => "Real path to the folder on the server",
-"Fix Permissions" => "Fix Permissions",
-"How to handle remote permissions to be used by PHP as local permissions. See manual." => "How to handle remote permissions to be used by PHP as local permissions. See manual.",
+"Real path to the root folder on the server" => "Real path to the root folder on the server",
 );
 ?>

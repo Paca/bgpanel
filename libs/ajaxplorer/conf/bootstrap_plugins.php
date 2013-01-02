@@ -55,9 +55,9 @@ $PLUGINS = array(
 			"SQL_DRIVER"	=> array(
 				"driver" => "mysql",
 				"host"   => "localhost",
-				"database"   => "bgp",
-				"user"   => "bgp",
-				"password"   => "bgp1",
+				"database"   => "database",
+				"user"   => "user",
+				"password"   => "password",
 			),
 			/*
 			"REPOSITORIES_FILEPATH"	=> "AJXP_DATA_PATH/plugins/conf.serial/repo.ser",
@@ -78,9 +78,9 @@ $PLUGINS = array(
 			"SQL_DRIVER"	=> array(
 				"driver" => "mysql",
 				"host"   => "localhost",
-				"database"   => "bgp",
-				"user"   => "bgp",
-				"password"   => "bgp1",
+				"database"   => "database",
+				"user"   => "user",
+				"password"   => "password",
 		),
 		"AUTOCREATE_AJXPUSER" 	=> false,
 		"FAST_CHECKS"		    => false,
@@ -92,9 +92,9 @@ $PLUGINS = array(
 			"SQL_DRIVER"	=> array(
 				"driver" => "mysql",
 				"host"   => "localhost",
-				"database"   => "bgp",
-				"user"   => "bgp",
-				"password"   => "bgp1",
+				"database"   => "database",
+				"user"   => "user",
+				"password"   => "password",
 			)
 		)
 	)
