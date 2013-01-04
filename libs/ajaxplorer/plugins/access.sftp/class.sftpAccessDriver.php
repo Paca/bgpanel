@@ -29,53 +29,30 @@ require_once(AJXP_INSTALL_PATH."/plugins/access.sftp/phpseclib/SFTP.php");
  * AJXP_Plugin to access a remote server using SSH File Transfer Protocol (SFTP) with phpseclib ( http://phpseclib.sourceforge.net/ )
  * @author: warhawk3407 <warhawk3407@gmail.com>, sUpEr g2
  */
-class sftpAccessDriver extends fsAccessDriver
+class sftpAccessDriver extends AbstractAccessDriver
 {
 	/**
 	* @var Repository
 	*/
-	public $repository;
-	public $driverConf;
-	protected $wrapperClassName;
-	protected $urlBase;
 
-	// SFTP Link
-	var $sftpLink = false;
+	/** SFTP Base Path **/
+	var $basePath = '';
+	/** SFTP Link **/
+	var $sftpLink = FALSE;
 
-	/**
-	 * Parse
-	 * @param DOMNode $contribNode
-	 */
-	protected function parseSpecificContributions(&$contribNode)
-	{
-		parent::parseSpecificContributions($contribNode);
-		if($contribNode->nodeName != "actions") return ;
-		$this->disableArchiveBrowsingContributions($contribNode);
-	}
+
 
 	/**
 	 * initRepository
 	 */
 	function initRepository()
 	{
-		if(is_array($this->pluginConf)){
-			$this->driverConf = $this->pluginConf;
-		}else{
-			$this->driverConf = array();
-		}
-
-		$path = $this->repository->getOption("PATH");
-		$recycle = $this->repository->getOption("RECYCLE_BIN");
-        ConfService::setConf("PROBE_REAL_SIZE", false);
-
-		$wrapperData = $this->detectStreamWrapper(true);
-		$this->wrapperClassName = $wrapperData["classname"];
-		$this->urlBase = $wrapperData["protocol"]."://".$this->repository->getId();
-
-		if($recycle != ""){
-			RecycleBinManager::init($this->urlBase, "/".$recycle);
-		}
+		$this->basePath = $this->repository->getOption("PATH");
+		$sftpLink = $this->connect();
+		$this->close($sftpLink);
 	}
+
+
 
 	/**
 	 * SFTP/SSH2 connection
@@ -95,61 +72,34 @@ class sftpAccessDriver extends fsAccessDriver
 			throw new Exception("Login Failed!");
 		}
 
-		return true;
+		return TRUE;
 	}
 
-	/**
-	 * switchAction function
-	 * @param $action 
-	 * @param $httpVars
-	 * @param $fileVars
-	 */
+	function close(){
+		// Close Connection
+		$this->sftpLink->disconnect();
+
+		return TRUE;
+	}
+
+
+
+	// DEBUG: throw new AJXP_Exception("DEBUG:".print_r($test));
+
+
+
 	function switchAction($action, $httpVars, $fileVars)
 	{
 		if(!isSet($this->actions[$action])) return;
 		parent::accessPreprocess($action, $httpVars, $fileVars);
 
 		$selection = new UserSelection();
+		$selection->initFromHttpVars($httpVars);
+
 		$dir = $httpVars["dir"] OR "";
-        if($this->wrapperClassName == "fsAccessWrapper"){
-            $dir = fsAccessWrapper::patchPathForBaseDir($dir);
-        }
 		$dir = AJXP_Utils::securePath($dir);
-		if($action != "upload"){
-			$dir = AJXP_Utils::decodeSecureMagic($dir);
-		}
-		$selection->initFromHttpVars($httpVars);
-		if(!$selection->isEmpty()){
-			$this->filterUserSelectionToHidden($selection->getFiles());
-		}
-		$mess = ConfService::getMessages();
 
-		$newArgs = RecycleBinManager::filterActions($action, $selection, $dir, $httpVars);
-		if(isSet($newArgs["action"])) $action = $newArgs["action"];
-		if(isSet($newArgs["dest"])) $httpVars["dest"] = SystemTextEncoding::toUTF8($newArgs["dest"]);//Re-encode!
- 		// FILTER DIR PAGINATION ANCHOR
-		$page = null;
-		if(isSet($dir) && strstr($dir, "%23")!==false){
-			$parts = explode("%23", $dir);
-			$dir = $parts[0];
-			$page = $parts[1];
-		}
-
-		$pendingSelection = "";
-		$logMessage = null;
-		$reloadContextNode = false;
-
-		/*
-		$repo = ConfService::getRepository();
-		if(!isSet($this->actions[$action])) return;
-		parent::accessPreprocess($action, $httpVars, $fileVars);
-		$xmlBuffer = "";
-		foreach($httpVars as $getName=>$getValue){
-			$$getName = AJXP_Utils::securePath($getValue);
-		}
-		$selection = new UserSelection();
-		$selection->initFromHttpVars($httpVars);
-		if(isSet($dir) && $action != "upload") {
+		if(isSet($dir) && $action != "upload"){
 			$safeDir = $dir;
 			$dir = SystemTextEncoding::fromUTF8($dir);
 		}
@@ -162,108 +112,158 @@ class sftpAccessDriver extends fsAccessDriver
 		if(isSet($dest)) {
 			$dest = SystemTextEncoding::fromUTF8($dest);
 		}
+
 		$mess = ConfService::getMessages();
-		*/
+
 
 		switch($action)
 		{
+			//------------------------------------
+			//	XML LISTING
+			//------------------------------------
+			case "ls":
+				if(!isSet($dir) || $dir == "/") $dir = "";
 
-			/*
-			//------------------------------------
-			//	DOWNLOAD
-			//------------------------------------
-			case "download":
-				AJXP_Logger::logAction("Download", array("files"=>$selection));
-				@set_error_handler(array("HTMLWriter", "javascriptErrorHandler"), E_ALL & ~ E_NOTICE);
-				@register_shutdown_function("restore_error_handler");
-				$zip = false;
-				if($selection->isUnique()){
-					if(is_dir($this->urlBase.$selection->getUniqueFile())) {
-						$zip = true;
-						$base = basename($selection->getUniqueFile());
-						$dir .= "/".dirname($selection->getUniqueFile());
-					}else{
-						if(!file_exists($this->urlBase.$selection->getUniqueFile())){
-							throw new Exception("Cannot find file!");
+				// SFTP Connection
+				$this->connect();
+				if ( !$this->sftpLink ){
+					throw new AJXP_Exception("No sftpLink.");
+				}
+
+				// SFTP Open directory
+				$cd = $this->sftpLink->exec('cd '.$this->basePath.$dir);
+				if( !empty($cd) ){
+					throw new AJXP_Exception("Cannot open dir: ".$dir);
+				}
+				unset($cd);
+
+				/**
+				 * AJXP_XML Header
+				 *
+				 * AJXP_XMLWriter::header();
+				 */
+				header('Content-Type: text/xml; charset=UTF-8');
+				header('Cache-Control: no-cache');
+				print('<?xml version="1.0" encoding="UTF-8"?>');
+				print("<tree repo_has_recycle=\"false\" is_file=\"false\" filename=\"".$dir."\">");
+
+				// List files and directories
+				$contents = $this->sftpLink->rawlist($this->basePath.$dir);
+
+				/**
+				 * AJXP_XML Nodes
+				 *
+				 * loadNodeInfo
+				 */
+				$EXTENSIONS = $this->extensions();
+				foreach ($contents as $key => $value) // The key is the name of a file or a folder
+				{
+					if($key != '.' && $key != '..') // Remove '.' and '..' directories from listing
+					{
+						if($value['type'] == 1){
+							// FILE MetaData
+							$is_image = 0; // (Default: 0)
+							$mimestring = "Text File"; // Type (Default: Text Type)
+							$icon = 'txt2.png'; // Icon (Default: txt2.png - Text Type)
+							$file_group = $value['gid'];
+							$file_owner = $value['uid'];
+							$perms = substr(decoct($value['permissions']), 2); // To get permissions formatted  as "0644"
+							$modified = $value['mtime']; // Modified
+							$size = $this->bytesToSize($value['size']); // Readable Size
+							$bytesize = $value['size']; // Computer Size
+
+							// MIME Process (String and Icon)
+							$extension = pathinfo($key, PATHINFO_EXTENSION);
+							foreach($EXTENSIONS as $extValue){
+								if ($extValue[0] == $extension)	{
+									$mimestring = $extValue[2];
+									$icon = $extValue[1];
+									break;
+								}
+							}
+							reset($EXTENSIONS);
+							unset($extension);
+
+							// Files Nodes
+							$files[$key] = "<tree ajxp_node=\"true\" text=\"$key\" is_file=\"true\" is_image=\"$is_image\" filename=\"$dir/$key\" mimestring=\"$mimestring\" icon=\"$icon\" file_group=\"$file_group\" file_owner=\"$file_owner\" file_perms=\"$perms\" ajxp_modiftime=\"$modified\" bytesize=\"$bytesize\" filesize=\"$size\"/>";
+						}
+						else{
+							// FOLDER MetaData
+							$file_group = $value['gid'];
+							$file_owner = $value['uid'];
+							$perms = substr(decoct($value['permissions']), 1); // Perms
+							$modified = $value['mtime']; // Modified
+							$bytesize = $value['size']; // Computer Size
+							$size = $this->bytesToSize($value['size']); // Readable Size
+
+							// Folders Nodes
+							$folders[$key] = "<tree ajxp_node=\"true\" text=\"$key\" is_file=\"false\" is_image=\"0\" filename=\"$dir/$key\" mimestring=\"Directory\" icon=\"folder.png\" openicon=\"folder_open.png\" file_group=\"$file_group\" file_owner=\"$file_owner\" file_perms=\"$perms\" ajxp_modiftime=\"$modified\" bytesize=\"$bytesize\" filesize=\"$size\"/>";
 						}
 					}
-				}else{
-					$zip = true;
 				}
-				if($zip){
-					// Make a temp zip and send it as download
-					$loggedUser = AuthService::getLoggedUser();
-					$file = AJXP_Utils::getAjxpTmpDir()."/".($loggedUser?$loggedUser->getId():"shared")."_".time()."tmpDownload.zip";
-					$zipFile = $this->makeZip($selection->getFiles(), $file, $dir);
-					if(!$zipFile) throw new AJXP_Exception("Error while compressing");
-					register_shutdown_function("unlink", $file);
-					$localName = ($base==""?"Files":$base).".zip";
-					$this->readFile($file, "force-download", $localName, false, false, true);
-				}else{
-					$localName = "";
-					AJXP_Controller::applyHook("dl.localname", array($this->urlBase.$selection->getUniqueFile(), &$localName, $this->wrapperClassName));
-					$this->readFile($this->urlBase.$selection->getUniqueFile(), "force-download", $localName);
+				unset($contents);
+
+				// Sort nodes and build a single array
+				if (isset($folders)){
+					sort($folders);
+					$nodes = $folders;
+				}
+				else{
+					$nodes = array();
+				}
+				if (isset($files)){
+					sort($files);
+				}
+				else{
+					$files = array();
+				}
+				$nodes = array_merge($nodes, $files);
+				unset($files, $folders);
+
+				/**
+				 * AJXP_XML
+				 *
+				 * Print <tree ... />
+				 */
+				foreach($nodes as $node){
+					print($node);
 				}
 
+				/**
+				 * AJXP_XML Footer
+				 *
+				 * AJXP_XMLWriter::close();
+				 */
+				print("</tree>");
+
+				// SFTP Connection Closure
+				$this->close();
 			break;
-			*/
+						
+			//------------------------------------
+			//	CREER UN REPERTOIRE / CREATE DIR
+			//------------------------------------
+			case "mkdir":
 			
-			/*
-			//------------------------------------
-			//	DELETE
-			//------------------------------------
-			case "delete";
-
-				if($selection->isEmpty())
-				{
-					throw new AJXP_Exception("", 113);
+				// SFTP Connection
+				$this->connect();
+				if ( !$this->sftpLink ){
+					throw new AJXP_Exception("No sftpLink.");
 				}
-				$logMessages = array();
-				$errorMessage = $this->delete($selection->getFiles(), $logMessages);
-				if(count($logMessages))
-				{
-					$logMessage = join("\n", $logMessages);
-				}
-				if($errorMessage) throw new AJXP_Exception(SystemTextEncoding::toUTF8($errorMessage));
-				AJXP_Logger::logAction("Delete", array("files"=>$selection));
-				$reloadContextNode = true;
-
-			break;
-
-			//------------------------------------
-			//	RENAME
-			//------------------------------------
-			case "rename";
-
-				$file = AJXP_Utils::decodeSecureMagic($httpVars["file"]);
-				$filename_new = AJXP_Utils::decodeSecureMagic($httpVars["filename_new"]);
-                $dest = null;
-                if(isSet($httpVars["dest"])){
-                    $dest = AJXP_Utils::decodeSecureMagic($httpVars["dest"]);
-                    $filename_new = "";
-                }
-				$this->filterUserSelectionToHidden(array($filename_new));
-				$this->rename($file, $filename_new, $dest);
-				$logMessage= SystemTextEncoding::toUTF8($file)." $mess[41] ".SystemTextEncoding::toUTF8($filename_new);
-				$reloadContextNode = true;
-				$pendingSelection = $filename_new;
-				AJXP_Logger::logAction("Rename", array("original"=>$file, "new"=>$filename_new));
-
-			break;
-
-			//------------------------------------
-			//	CREATE DIR
-			//------------------------------------
-			case "mkdir";
-
+				// need to correct $dir var (remove first / in path) only for sftp
+				$dir = preg_replace('/^\//', '', $dir);  
+				
+				// check form dirname
 				$messtmp="";
 				$dirname=AJXP_Utils::decodeSecureMagic($httpVars["dirname"], AJXP_SANITIZE_HTML_STRICT);
 				$dirname = substr($dirname, 0, ConfService::getCoreConf("NODENAME_MAX_LENGTH"));
 				$this->filterUserSelectionToHidden(array($dirname));
                 AJXP_Controller::applyHook("node.before_create", array(new AJXP_Node($dir."/".$dirname), -2));
-				$error = $this->mkDir($dir, $dirname);
-				if(isSet($error)){
-					throw new AJXP_Exception($error);
+                
+                // SFTP create directory command
+				$dir=="" ? $mkdir = $this->sftpLink->exec("mkdir ".$dirname) : $mkdir = $this->sftpLink->exec("mkdir ".$dir."/".$dirname);
+				if( !empty($mkdir) ){
+					throw new AJXP_Exception("Cannot create dir: ".$dir."/".$dirname);
 				}
 				$messtmp.="$mess[38] ".SystemTextEncoding::toUTF8($dirname)." $mess[39] ";
 				if($dir=="") {$messtmp.="/";} else {$messtmp.= SystemTextEncoding::toUTF8($dir);}
@@ -271,362 +271,119 @@ class sftpAccessDriver extends fsAccessDriver
 				$pendingSelection = $dirname;
 				$reloadContextNode = true;
                 AJXP_Logger::logAction("Create Dir", array("dir"=>$dir."/".$dirname));
-
+                
+				// SFTP Connection Closure
+				$this->close();
 			break;
-
+						
 			//------------------------------------
 			//	CREER UN FICHIER / CREATE FILE
 			//------------------------------------
-			case "mkfile";
-
+			case "mkfile":
+			
+				// SFTP Connection
+				$this->connect();
+				if ( !$this->sftpLink ){
+					throw new AJXP_Exception("No sftpLink.");
+				}
+				// need to correct $dir var (remove first / in path) only for sftp
+				$dir = preg_replace('/^\//', '', $dir);  
+				
+				// check form filename
 				$messtmp="";
 				$filename=AJXP_Utils::decodeSecureMagic($httpVars["filename"], AJXP_SANITIZE_HTML_STRICT);
 				$filename = substr($filename, 0, ConfService::getCoreConf("NODENAME_MAX_LENGTH"));
 				$this->filterUserSelectionToHidden(array($filename));
-				$content = "";
-				if(isSet($httpVars["content"])){
-					$content = $httpVars["content"];
-				}
-				$error = $this->createEmptyFile($dir, $filename, $content);
-				if(isSet($error)){
-					throw new AJXP_Exception($error);
+				$filename = preg_replace('/^\//', '', $filename);
+				
+                // SFTP create directory command
+				$dir=="" ? $touch = $this->sftpLink->exec('touch '.$filename) : $touch = $this->sftpLink->exec('touch '.$dir.'/'.$filename) ;
+				if( !empty($touch) ){
+					throw new AJXP_Exception('Cannot touch file: '.$dir.'/'.$filename);
 				}
 				$messtmp.="$mess[34] ".SystemTextEncoding::toUTF8($filename)." $mess[39] ";
 				if($dir=="") {$messtmp.="/";} else {$messtmp.=SystemTextEncoding::toUTF8($dir);}
 				$logMessage = $messtmp;
-				$reloadContextNode = true;
 				$pendingSelection = $dir."/".$filename;
-				AJXP_Logger::logAction("Create File", array("file"=>$dir."/".$filename));
-				//$newNode = new AJXP_Node($this->urlBase.$dir."/".$filename);
-				//AJXP_Controller::applyHook("node.change", array(null, $newNode, false));
-
-			break;
-
-			//------------------------------------
-			//	CHANGE FILE PERMISSION
-			//------------------------------------
-			case "chmod";
-
-				$messtmp="";
-				$files = $selection->getFiles();
-				$changedFiles = array();
-				$chmod_value = $httpVars["chmod_value"];
-				$recursive = $httpVars["recursive"];
-				$recur_apply_to = $httpVars["recur_apply_to"];
-				foreach ($files as $fileName){
-					$error = $this->chmod($fileName, $chmod_value, ($recursive=="on"), ($recursive=="on"?$recur_apply_to:"both"), $changedFiles);
-				}
-				if(isSet($error)){
-					throw new AJXP_Exception($error);
-				}
-				//$messtmp.="$mess[34] ".SystemTextEncoding::toUTF8($filename)." $mess[39] ";
-				$logMessage="Successfully changed permission to ".$chmod_value." for ".count($changedFiles)." files or folders";
 				$reloadContextNode = true;
-				AJXP_Logger::logAction("Chmod", array("dir"=>$dir, "filesCount"=>count($changedFiles)));
-
-			break;
-
+                AJXP_Logger::logAction("Create File", array("file"=>$dir."/".$filename));
+                
+				// SFTP Connection Closure
+				$this->close();
+			break;	
+			
 			//------------------------------------
-			//	UPLOAD
+			//	DELETE
 			//------------------------------------
-			case "upload":
-
-				AJXP_Logger::debug("Upload Files Data", $fileVars);
-				$destination=$this->urlBase.AJXP_Utils::decodeSecureMagic($dir);
-				AJXP_Logger::debug("Upload inside", array("destination"=>$destination));
-				if(!$this->isWriteable($destination))
-				{
-					$errorCode = 412;
-					$errorMessage = "$mess[38] ".SystemTextEncoding::toUTF8($dir)." $mess[99].";
-					AJXP_Logger::debug("Upload error 412", array("destination"=>$destination));
-					return array("ERROR" => array("CODE" => $errorCode, "MESSAGE" => $errorMessage));
-				}
-				foreach ($fileVars as $boxName => $boxData)
-				{
-					if(substr($boxName, 0, 9) != "userfile_") continue;
-					$err = AJXP_Utils::parseFileDataErrors($boxData);
-					if($err != null)
-					{
-						$errorCode = $err[0];
-						$errorMessage = $err[1];
-						break;
-					}
-					$userfile_name = $boxData["name"];
-					try{
-						$this->filterUserSelectionToHidden(array($userfile_name));
-					}catch (Exception $e){
-						return array("ERROR" => array("CODE" => 411, "MESSAGE" => "Forbidden"));
-					}
-					$userfile_name=AJXP_Utils::sanitize(SystemTextEncoding::fromPostedFileName($userfile_name), AJXP_SANITIZE_HTML_STRICT);
-                    if(isSet($httpVars["urlencoded_filename"])){
-                        $userfile_name = AJXP_Utils::sanitize(SystemTextEncoding::fromUTF8(urldecode($httpVars["urlencoded_filename"])), AJXP_SANITIZE_HTML_STRICT);
-                    }
-                    AJXP_Logger::debug("User filename ".$userfile_name);
-                    $userfile_name = substr($userfile_name, 0, ConfService::getCoreConf("NODENAME_MAX_LENGTH"));
-					if(isSet($httpVars["auto_rename"])){
-						$userfile_name = self::autoRenameForDest($destination, $userfile_name);
-					}
-                    AJXP_Controller::applyHook("node.before_create", array(new AJXP_Node($this->urlBase.$dir."/".$userfile_name), $boxData["size"]));
-					if(isSet($boxData["input_upload"])){
-						try{
-							AJXP_Logger::debug("Begining reading INPUT stream");
-                            if(file_exists($destination."/".$userfile_name)){
-                                AJXP_Controller::applyHook("node.before_change", array(new AJXP_Node($destination."/".$userfile_name), $boxData["size"]));
-                            }
-                            AJXP_Controller::applyHook("node.before_change", array(new AJXP_Node($destination)));
-							$input = fopen("php://input", "r");
-							$output = fopen("$destination/".$userfile_name, "w");
-							$sizeRead = 0;
-							while($sizeRead < intval($boxData["size"])){
-								$chunk = fread($input, 4096);
-								$sizeRead += strlen($chunk);
-								fwrite($output, $chunk, strlen($chunk));
-							}
-							fclose($input);
-							fclose($output);
-							AJXP_Logger::debug("End reading INPUT stream");
-						}catch (Exception $e){
-							$errorCode=411;
-							$errorMessage = $e->getMessage();
-							break;
-						}
-					}else{
-                        try {
-                            AJXP_Controller::applyHook("before_create", array(new AJXP_Node($destination."/".$userfile_name), $boxData["size"]));
-                        }catch (Exception $e){
-                            $errorCode=411;
-                            $errorMessage = $e->getMessage();
-             				break;
-                        }
-
-                        $result = @move_uploaded_file($boxData["tmp_name"], "$destination/".$userfile_name);
-                        if(!$result){
-                            $realPath = call_user_func(array($this->wrapperClassName, "getRealFSReference"),"$destination/".$userfile_name);
-                            $result = move_uploaded_file($boxData["tmp_name"], $realPath);
-                        }
-						if (!$result)
-						{
-							$errorCode=411;
-							$errorMessage="$mess[33] ".$userfile_name;
-							break;
-						}
-					}
-                    if(isSet($httpVars["appendto_urlencoded_part"])){
-                        $appendTo = AJXP_Utils::sanitize(SystemTextEncoding::fromUTF8(urldecode($httpVars["appendto_urlencoded_part"])), AJXP_SANITIZE_HTML_STRICT);
-                        if(file_exists($destination ."/" . $appendTo)){
-                            AJXP_Logger::debug("Should copy stream from $userfile_name to $appendTo");
-                            $partO = fopen($destination."/".$userfile_name, "r");
-                            $appendF = fopen($destination ."/". $appendTo, "a+");
-                            while(!feof($partO)){
-                                $buf = fread($partO, 1024);
-                                fwrite($appendF, $buf, strlen($buf));
-                            }
-                            fclose($partO);
-                            fclose($appendF);
-                            AJXP_Logger::debug("Done, closing streams!");
-                        }
-                        @unlink($destination."/".$userfile_name);
-                        $userfile_name = $appendTo;
-                    }
-
-					$this->changeMode($destination."/".$userfile_name);
-                    AJXP_Controller::applyHook("node.change", array(null, new AJXP_Node($destination."/".$userfile_name), false));
-					$logMessage.="$mess[34] ".SystemTextEncoding::toUTF8($userfile_name)." $mess[35] $dir";
-					AJXP_Logger::logAction("Upload File", array("file"=>SystemTextEncoding::fromUTF8($dir)."/".$userfile_name));
-				}
-
-				if(isSet($errorMessage)){
-					AJXP_Logger::debug("Return error $errorCode $errorMessage");
-					return array("ERROR" => array("CODE" => $errorCode, "MESSAGE" => $errorMessage));
-				}else{
-					AJXP_Logger::debug("Return success");
-					return array("SUCCESS" => true);
-				}
-				return ;
-
-			break;
-
-			*/
-
-			//------------------------------------
-			//	XML LISTING
-			//------------------------------------
-			case "ls":
-
-				if(!isSet($dir) || $dir == "/") $dir = "";
-
-				$lsOptions = $this->parseLsOptions((isSet($httpVars["options"])?$httpVars["options"]:"a"));
-
-				$startTime = microtime();
-
-				$dir = AJXP_Utils::securePath(SystemTextEncoding::magicDequote($dir));
-
-				$path = $this->urlBase.($dir!= ""?($dir[0]=="/"?"":"/").$dir:"");
-                $nonPatchedPath = $path;
-                if($this->wrapperClassName == "fsAccessWrapper") {
-                    $nonPatchedPath = fsAccessWrapper::unPatchPathForBaseDir($path);
-                }
-
-				$threshold = $this->repository->getOption("PAGINATION_THRESHOLD");
-				if(!isSet($threshold) || intval($threshold) == 0) $threshold = 500;
-
-				$limitPerPage = $this->repository->getOption("PAGINATION_NUMBER");
-				if(!isset($limitPerPage) || intval($limitPerPage) == 0) $limitPerPage = 200;
-
-				$countFiles = $this->countFiles($path, !$lsOptions["f"]);
-				if($countFiles > $threshold){
-					$offset = 0;
-					$crtPage = 1;
-					if(isSet($page)){
-						$offset = (intval($page)-1)*$limitPerPage;
-						$crtPage = $page;
-					}
-					$totalPages = floor($countFiles / $limitPerPage) + 1;
-				}else{
-					$offset = $limitPerPage = 0;
-				}
-
-				$metaData = array();
-				if(RecycleBinManager::recycleEnabled() && $dir == ""){
-                    $metaData["repo_has_recycle"] = "true";
-				}
-
-				$parentAjxpNode = new AJXP_Node($nonPatchedPath, $metaData);
-                $parentAjxpNode->loadNodeInfo(false, true, ($lsOptions["l"]?"all":"minimal"));
-                if(AJXP_XMLWriter::$headerSent == "tree"){
-                    AJXP_XMLWriter::renderAjxpNode($parentAjxpNode, false);
-                }else{
-                    AJXP_XMLWriter::renderAjxpHeaderNode($parentAjxpNode);
-                }
-				if(isSet($totalPages) && isSet($crtPage)){
-					AJXP_XMLWriter::renderPaginationData(
-						$countFiles,
-						$crtPage,
-						$totalPages,
-						$this->countFiles($path, TRUE)
-					);
-					if(!$lsOptions["f"]){
-						AJXP_XMLWriter::close();
-						exit(1);
-					}
-				}
-
-				$cursor = 0;
-				$fullList = array("d" => array(), "z" => array(), "f" => array());
-
-
-
+			case "delete";
+			
 				// SFTP Connection
 				$this->connect();
-				if ( ! $this->sftpLink ){
-					throw new AJXP_Exception("DEBUG: No sftpLink.");
+				if ( !$this->sftpLink ){
+					throw new AJXP_Exception("No sftpLink.");
 				}
-
-				/*
-				// SFTP Open directory
-				$cd = $this->sftpLink->exec('cd '.$dir);
-				if(!empty($cd)) {
-					throw new AJXP_Exception("Cannot open dir ".$dir.' -- cd:'.$cd);
-					//throw new AJXP_Exception("Cannot open dir ".$nonPatchedPath);
-				}
-				unset($cd);
-				*/
-
-				// List files and directories inside the specified path
-				$nodes = $this->sftpLink->nlist();
-				// Sort
-				if(!empty($this->driverConf["SCANDIR_RESULT_SORTFONC"])){
-					usort($nodes, $this->driverConf["SCANDIR_RESULT_SORTFONC"]);
-				}
-
-
-
-				foreach ($nodes as $nodeName)
+				
+				if($selection->isEmpty())
 				{
-					if($nodeName == "." || $nodeName == "..") continue;
-
-					$isLeaf = "";
-					if(!$this->filterNodeName($path, $nodeName, $isLeaf, $lsOptions)){
-						continue;
-					}
-					if(RecycleBinManager::recycleEnabled() && $dir == "" && "/".$nodeName == RecycleBinManager::getRecyclePath()){
-						continue;
-					}
-
-					if($offset > 0 && $cursor < $offset){
-						$cursor ++;
-						continue;
-					}
-					if($limitPerPage > 0 && ($cursor - $offset) >= $limitPerPage) {
-						break;
-					}
-
-					$currentFile = $nonPatchedPath."/".$nodeName;
-                    $meta = array();
-                    if($isLeaf != "") $meta = array("is_file" => ($isLeaf?"1":"0"));
-                    $node = new AJXP_Node($currentFile, $meta);
-                    $node->setLabel($nodeName);
-                    $node->loadNodeInfo(false, false, ($lsOptions["l"]?"all":"minimal"));
-					if(!empty($node->metaData["nodeName"]) && $node->metaData["nodeName"] != $nodeName){
-                        $node->setUrl($nonPatchedPath."/".$node->metaData["nodeName"]);
-					}
-                    if(!empty($node->metaData["hidden"]) && $node->metaData["hidden"] === true){
-               			continue;
-               		}
-                    if(!empty($node->metaData["mimestring_id"]) && array_key_exists($node->metaData["mimestring_id"], $mess)){
-                        $node->mergeMetadata(array("mimestring" =>  $mess[$node->metaData["mimestring_id"]]));
-                    }
-
-                    $nodeType = "d";
-                    if($node->isLeaf()){
-                        if(AJXP_Utils::isBrowsableArchive($nodeName)) {
-                            if($lsOptions["f"] && $lsOptions["z"]){
-                                $nodeType = "f";
-                            }else{
-                                $nodeType = "z";
-                            }
-                        }
-                        else $nodeType = "f";
-                    }
-
-					$fullList[$nodeType][$nodeName] = $node;
-					$cursor ++;
+					throw new AJXP_Exception("", 113);
 				}
-                if(isSet($httpVars["recursive"]) && $httpVars["recursive"] == "true"){
-                    foreach($fullList["d"] as $nodeDir){
-                        $this->switchAction("ls", array(
-                            "dir" => SystemTextEncoding::toUTF8($nodeDir->getPath()),
-                            "options"=> $httpVars["options"],
-                            "recursive" => "true"
-                        ), array());
-                    }
-                }else{
-                    array_map(array("AJXP_XMLWriter", "renderAjxpNode"), $fullList["d"]);
-                }
-				array_map(array("AJXP_XMLWriter", "renderAjxpNode"), $fullList["z"]);
-				array_map(array("AJXP_XMLWriter", "renderAjxpNode"), $fullList["f"]);
-
-				// ADD RECYCLE BIN TO THE LIST
-				if($dir == "" && RecycleBinManager::recycleEnabled() && $this->driverConf["HIDE_RECYCLE"] !== true)
-				{
-					$recycleBinOption = RecycleBinManager::getRelativeRecycle();
-					if(file_exists($this->urlBase.$recycleBinOption)){
-						$recycleIcon = ($this->countFiles($this->urlBase.$recycleBinOption, false, true)>0?"trashcan_full.png":"trashcan.png");
-						$recycleNode = new AJXP_Node($this->urlBase.$recycleBinOption);
-                        $recycleNode->loadNodeInfo();
-                        AJXP_XMLWriter::renderAjxpNode($recycleNode);
+				$logMessages = array();
+				foreach ($selection->getFiles() as $fileToDelete) {
+					$fileToDelete = preg_replace('/^\//', '', $fileToDelete);
+					if(!file_exists($fileToDelete))
+					{
+						$logMessages[]=$mess[100]." ".SystemTextEncoding::toUTF8($fileToDelete);
+						continue;
 					}
+					$errorMessage = $this->sftpLink->delete($fileToDelete,true);
+					if(is_dir($fileToDelete))
+					{
+						$logMessages[]="$mess[38] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
+					}
+					else 
+					{
+						$logMessages[]="$mess[34] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
+					}										
 				}
-
-				AJXP_Logger::debug("LS Time : ".intval((microtime()-$startTime)*1000)."ms");
-
-				AJXP_XMLWriter::close();
-				return ;
-
+				
+				if(count($logMessages)) $logMessages = join("\n", $logMessages);				
+				if($errorMessage) throw new AJXP_Exception(SystemTextEncoding::toUTF8($errorMessage));
+				
+				AJXP_Controller::applyHook("node.change", array(new AJXP_Node($fileToDelete)));
+				AJXP_Logger::logAction("Delete", array("files"=>$selection));
+				$reloadContextNode = true;
+				
+				// SFTP Connection Closure
+				$this->close();
 			break;
+		
+			//------------------------------------
+			//	RENAME
+			//------------------------------------
+			case "rename";
+			
+				// SFTP Connection
+				$this->connect();
+				if ( !$this->sftpLink ){
+					throw new AJXP_Exception("No sftpLink.");
+				}
+				// need to correct $file and $filename_new vars (remove first / in path) only for sftp
+				$file = AJXP_Utils::decodeSecureMagic($httpVars["file"]);
+				$file = preg_replace('/^\//', '', $file);
+				$filename_new = AJXP_Utils::decodeSecureMagic($httpVars["filename_new"]);
+				$filename_new = preg_replace('/^\//', '', $filename_new);
+				$this->filterUserSelectionToHidden(array($filename_new));
+				$this->sftpLink->rename($file, $filename_new);
+				$logMessage= SystemTextEncoding::toUTF8($file)." $mess[41] ".SystemTextEncoding::toUTF8($filename_new);
+				$reloadContextNode = true;
+				$pendingSelection = $filename_new;
+				AJXP_Logger::logAction("Rename", array("original"=>$file, "new"=>$filename_new));
+
+				// SFTP Connection Closure
+				$this->close();
+			break;
+		
 		}
-
-
 		$xmlBuffer = "";
 		if(isset($logMessage) || isset($errorMessage))
 		{
@@ -639,10 +396,129 @@ class sftpAccessDriver extends fsAccessDriver
 		if(isSet($reloadDataNode)){
 			$xmlBuffer .= AJXP_XMLWriter::reloadDataNode($reloadDataNode, "", false);
 		}
-
 		return $xmlBuffer;
 	}
 
+	/**
+	 * Convert bytes to human readable format
+	 *
+	 * http://codeaid.net/php/convert-size-in-bytes-to-a-human-readable-format-%28php%29
+	 *
+	 * @param integer bytes Size in bytes to convert
+	 * @return string
+	 */
+	function bytesToSize($bytes, $precision = 2){
+		$kilobyte = 1024;
+		$megabyte = $kilobyte * 1024;
+		$gigabyte = $megabyte * 1024;
+		$terabyte = $gigabyte * 1024;
+
+		if (($bytes >= 0) && ($bytes < $kilobyte)) {
+			return $bytes . ' B';
+
+		} elseif (($bytes >= $kilobyte) && ($bytes < $megabyte)) {
+			return round($bytes / $kilobyte, $precision) . ' KB';
+
+		} elseif (($bytes >= $megabyte) && ($bytes < $gigabyte)) {
+			return round($bytes / $megabyte, $precision) . ' MB';
+
+		} elseif (($bytes >= $gigabyte) && ($bytes < $terabyte)) {
+			return round($bytes / $gigabyte, $precision) . ' GB';
+
+		} elseif ($bytes >= $terabyte) {
+			return round($bytes / $terabyte, $precision) . ' TB';
+
+		} else {
+			return $bytes . ' B';
+		}
+	}
+
+	// ALL FILES TYPES
+	function extensions(){
+		return array(
+			array("mid", "midi.png", "Midi File"),
+			array("txt", "txt2.png", "Text file"),
+			array("sql","txt2.png", "Text file"),
+			array("js","javascript.png", "Javascript"),
+			array("gif","image.png", "GIF picture"),
+			array("jpg","image.png", "JPG picture"),
+			array("html","html.png", "HTML page"),
+			array("htm","html.png", "HTML page"),
+			array("rar","archive.png", "RAR File"),
+			array("gz","zip.png", "GZ File"),
+			array("tgz","archive.png", "GZ File"),
+			array("bz2","archive.png", "BZ2 File"),
+			array("z","archive.png", "GZ File"),
+			array("ra","video.png", "REAL file"),
+			array("ram","video.png", "REAL file"),
+			array("rm","video.png", "REAL file"),
+			array("pl","source_pl.png", "PERL script"),
+			array("zip","zip.png", "ZIP file"),
+			array("wav","sound.png", "WAV file"),
+			array("php","php.png", "PHP script"),
+			array("php5","php.png", "PHP script"),
+			array("php3","php.png", "PHP script"),
+			array("phtml","php.png", "PHP script"),
+			array("exe","exe.png", "Exe file"),
+			array("sh","txt2.png", "Shell file"),
+			array("cfg","txt2.png", "CFG file"),
+			array("bmp","image.png", "BMP picture"),
+			array("png","image.png", "PNG picture"),
+			array("css","css.png", "CSS File"),
+			array("mp3","sound.png", "MP3 File"),
+			array("m4a","sound.png", "MP3 File"),
+			array("aac","sound.png", "MP3 File"),
+			array("xls","spreadsheet.png", "Spreadsheet"),
+			array("xlsx","spreadsheet.png", "Spreadsheet"),
+			array("ods","spreadsheet.png", "Spreadsheet"),
+			array("sxc","spreadsheet.png", "Spreadsheet"),
+			array("csv","spreadsheet.png", "Spreadsheet"),
+			array("tsv","spreadsheet.png", "Spreadsheet"),
+			array("doc","word.png", "Word Document"),
+			array("docx","word.png", "Word Document"),
+			array("odt","word.png", "Word Document"),
+			array("swx","word.png", "Word Document"),
+			array("rtf","word.png", "Word Document"),
+			array("ppt","presentation.png", "Presentation"),
+			array("pps","presentation.png", "Presentation"),
+			array("odp","presentation.png", "Presentation"),
+			array("sxi","presentation.png", "Presentation"),
+			array("pdf","pdf.png", "PDF File"),
+			array("mov","video.png", "MOV File"),
+			array("avi","video.png", "AVI File"),
+			array("mpg","video.png", "MPG File"),
+			array("mpeg","video.png", "MPEG File"),
+			array("mp4","video.png", "MPEG File"),
+			array("m4v","video.png", "MPEG File"),
+			array("ogv","video.png", "Video"),
+			array("webm","video.png", "Video"),
+			array("wmv","video.png", "AVI File"),
+			array("swf","flash.png", "FLASH File"),
+			array("flv","flash.png", "FLASH File"),
+			array("tiff","image.png", "TIFF"),
+			array("tif","image.png", "TIFF"),
+			array("svg","image.png", "SVG"),
+			array("psd","image.png", "Photoshop")
+		);
+	}
+	
+	/**
+	 * Test if userSelection is containing a hidden file, which should not be the case!
+	 * @param UserSelection $files
+	 */
+	function filterUserSelectionToHidden($files){
+		foreach ($files as $file){
+			$file = basename($file);
+			if(AJXP_Utils::isHidden($file) && !$this->driverConf["SHOW_HIDDEN_FILES"]){
+				throw new Exception("Forbidden");
+			}
+			/*
+				if($this->filterFile($file) || $this->filterFolder($file)){
+				throw new Exception("Forbidden");
+			}
+			*/
+		}
+	}
 }
 
 ?>

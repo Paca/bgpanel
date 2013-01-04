@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ajxpdriver name="sftp" label="CONF_MESSAGE[SSH File Transfer Protocol (SFTP)]" description="CONF_MESSAGE[The SSH File Transfer Protocol is a network protocol that provides file access, file transfer, and file management functionalities over PHPSECLIB for SSH.]" mixins="filesystem_commons,slug_provider,template_provider" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="file:../core.ajaxplorer/ajxp_registry.xsd">
+<ajxpdriver name="sftp" label="CONF_MESSAGE[SSH File Transfer Protocol (SFTP)]" description="CONF_MESSAGE[The SSH File Transfer Protocol is a network protocol that provides file access, file transfer, and file management functionalities over SSH2.]" mixins="slug_provider,template_provider" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="file:../core.ajaxplorer/ajxp_registry.xsd">
 
 	<client_settings icon="plugins/access.sftp/icon.png">
+
 		<resources>
 			<i18n namespace="sftp_access" path="plugins/access.sftp/i18n"/>
 		</resources>
+
 	</client_settings>
 
 	<server_settings>
@@ -17,13 +19,9 @@
 
 	<class_definition filename="plugins/access.sftp/class.sftpAccessDriver.php" classname="sftpAccessDriver"/>
 
-	<class_stream_wrapper filename="plugins/access.sftp/class.sftpAccessWrapper.php" classname="sftpAccessWrapper" protocol="ajxp.sftp"/>
-
-	<dependencies>
-		<pluginClass pluginName="access.fs"/>
-	</dependencies>
-
 	<registry_contributions>
+
+		<external_file filename="plugins/access.sftp/sftpActions.xml" include="actions/*"/>
 
 		<client_configs>
 			<template_part ajxpId="search_container" ajxpClass="SearchEngine" ajxpOptions="{}"/>
@@ -36,13 +34,10 @@
 				</columns>
 			</component_config>
 			<component_config className="FoldersTree">
-				<property name="display" value="d"/>
+				<property name="display" value="dz"/>
 			</component_config>
 		</client_configs>
 
-		<external_file filename="plugins/access.fs/fsActions.xml" include="actions/*" exclude=""/>
-		<external_file filename="plugins/access.fs/fsActions.xml" include="client_configs/*" exclude=""/>
-		<external_file filename="plugins/access.fs/manifest.xml" include="registry_contributions/hooks/*" exclude=""/>
-
 	</registry_contributions>
+
 </ajxpdriver>
