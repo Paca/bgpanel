@@ -45,10 +45,14 @@ class sftpAccessDriver extends AbstractAccessDriver
 	/**
 	 * initRepository
 	 */
-	function initRepository()
+	public function initRepository()
 	{
 		$this->basePath = $this->repository->getOption("PATH");
 		$sftpLink = $this->connect();
+		$recycle = $this->repository->getOption("RECYCLE_BIN");
+		if($recycle != ""){
+			RecycleBinManager::init($this->urlBase, "/".$recycle);
+		}
 		$this->close($sftpLink);
 	}
 
@@ -57,7 +61,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 	/**
 	 * SFTP/SSH2 connection
 	 */
-	function connect(){
+	private function connect(){
 		// Repository Information
 		$host = $this->repository->getOption("SFTP_HOST");
 		$port = $this->repository->getOption("SFTP_PORT");
@@ -75,7 +79,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 		return TRUE;
 	}
 
-	function close(){
+	private function close(){
 		// Close Connection
 		$this->sftpLink->disconnect();
 
@@ -199,6 +203,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 							// Folders Nodes
 							$folders[$key] = "<tree ajxp_node=\"true\" text=\"$key\" is_file=\"false\" is_image=\"0\" filename=\"$dir/$key\" mimestring=\"Directory\" icon=\"folder.png\" openicon=\"folder_open.png\" file_group=\"$file_group\" file_owner=\"$file_owner\" file_perms=\"$perms\" ajxp_modiftime=\"$modified\" bytesize=\"$bytesize\" filesize=\"$size\"/>";
 						}
+						
 					}
 				}
 				unset($contents);
@@ -347,7 +352,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 						RecycleBinManager::deleteFromRecycle($location);
 					}
 					
-					$this->sftpLink->delete($fileToDelete,true) ==1 ? $errorMessage = '' : $errorMessage = 'Fichier '.$fileToDelete.' impossible a supprimer';
+					$this->sftpLink->delete($fileToDelete,true) ==1 ? $errorMessage = '' : $errorMessage = 'Elément '.$fileToDelete.' impossible à supprimer';
 					if(is_dir($fileToDelete) && $fileToDelete !=".." && $fileToDelete !="."){
 						$logMessage[]="$mess[38] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
 					} else {
@@ -436,9 +441,9 @@ class sftpAccessDriver extends AbstractAccessDriver
 					// correction of initial "/" in filename
 					$fileToMove = preg_replace('/^\//', '', $fileToMove);
 					if ($action == "move"){
-						$this->sftpLink->exec('mv '.$fileToMove.' '.$dest) == '' ? $successMessage[] = 'Fichier '.$fileToMove.' déplacé avec succès vers '.$dest : $errorMessage[] = 'Fichier '.$fileToMove.' impossible à déplacer vers '.$dest;
+						$this->sftpLink->exec('mv '.$fileToMove.' '.$dest) == '' ? $successMessage[] = 'Elément '.$fileToMove.' déplacé avec succès vers '.$dest : $errorMessage[] = 'Elément '.$fileToMove.' impossible à déplacer vers '.$dest;
 					} else {
-						$this->sftpLink->exec('cp '.$fileToMove.' '.$dest) == '' ? $successMessage[] = 'Fichier '.$fileToMove.' copié avec succès vers '.$dest : $errorMessage[] = 'Fichier '.$fileToMove.' impossible à copier vers '.$dest;
+						$this->sftpLink->exec('cp '.$fileToMove.' '.$dest) == '' ? $successMessage[] = 'Elément '.$fileToMove.' copié avec succès vers '.$dest : $errorMessage[] = 'Elément '.$fileToMove.' impossible à copier vers '.$dest;
 					}
 				}
 				/*
@@ -483,7 +488,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 	 * @param integer bytes Size in bytes to convert
 	 * @return string
 	 */
-	function bytesToSize($bytes, $precision = 2){
+	public function bytesToSize($bytes, $precision = 2){
 		$kilobyte = 1024;
 		$megabyte = $kilobyte * 1024;
 		$gigabyte = $megabyte * 1024;
@@ -510,7 +515,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 	}
 
 	// ALL FILES TYPES
-	function extensions(){
+	public function extensions(){
 		return array(
 			array("mid", "midi.png", "Midi File"),
 			array("txt", "txt2.png", "Text file"),
@@ -582,7 +587,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 	 * Test if userSelection is containing a hidden file, which should not be the case!
 	 * @param UserSelection $files
 	 */
-	function filterUserSelectionToHidden($files){
+	public function filterUserSelectionToHidden($files){
 		foreach ($files as $file){
 			$file = basename($file);
 			if(AJXP_Utils::isHidden($file) && !$this->driverConf["SHOW_HIDDEN_FILES"]){
@@ -600,6 +605,94 @@ class sftpAccessDriver extends AbstractAccessDriver
 	{
 		return is_writable($dir);
 	}
+	
+	protected function rawListEntryToStat($entry, $filterStatPerms = false)
+    {
+        $info = array();    
+		$vinfo = preg_split("/[\s]+/", $entry);
+		AJXP_Logger::debug("RAW LIST", $entry);
+		$statValue = array();
+		if ($vinfo[0] !== "total"){
+            $fileperms = $vinfo[0];
+            $info['num']   = $vinfo[1];
+            $info['owner'] = $vinfo[2];
+            $info['groups'] = array();
+            $i = 3;
+            while(true){
+                $info['groups'][] = $vinfo[$i];
+                $i++;
+                // Detect "Size" and "Month"
+                if(is_numeric($vinfo[$i]) && !is_numeric($vinfo[$i+1])) break;
+            }
+            $info['group'] = implode(" ", $info["groups"]);
+            $info['size']  = $vinfo[$i]; $i++;
+            $info['month'] = $vinfo[$i]; $i++;
+      		$info['day']   = $vinfo[$i]; $i++;
+      		$info['timeOrYear']  = $vinfo[$i]; $i++;
+		 }
+         $resplit = preg_split("/[\s]+/", $entry, 8 + count($info["groups"]));
+    	 $file = trim(array_pop($resplit));
+		 $statValue[7] = $statValue["size"] = trim($info['size']);
+		 if(strstr($info["timeOrYear"], ":")){
+		 	$info["time"] = $info["timeOrYear"];
+		 	$info["year"] = date("Y");
+		 }else{
+		 	$info["time"] = '09:00';
+		 	$info["year"] = $info["timeOrYear"];
+		 }
+		 $statValue[4] = $statValue["uid"] = $info["owner"];
+		 $statValue[5] = $statValue["gid"] = $info["group"];
+    	 $filedate  = trim($info['day'])." ".trim($info['month'])." ".trim($info['year'])." ".trim($info['time']);
+    	 $statValue[9] = $statValue["mtime"]  = strtotime($filedate);
+    	 
+		 $isDir = false;
+		 if (strpos($fileperms,"d")!==FALSE || strpos($fileperms,"l")!==FALSE)
+		 {
+			 if(strpos($fileperms,"l")!==FALSE)
+			 {
+    			$test=explode(" ->", $file);
+				$file=$test[0];
+		 	 }
+		 	 $isDir = true;
+		}
+		$boolIsDir = $isDir;
+		$statValue[2] = $statValue["mode"] = $this->convertingChmod($fileperms);
+		$statValue["ftp_perms"] = $fileperms;
+		return array("name"=>$file, "stat"=>$statValue, "dir"=>$isDir);
+	}
+	
+	protected function convertingChmod($permissions, $filterForStat = false)
+	{
+		$mode = 0;
+		
+		if ($permissions[1] == 'r') $mode += 0400;
+		if ($permissions[2] == 'w') $mode += 0200;
+		if ($permissions[3] == 'x') $mode += 0100;		
+	 	else if ($permissions[3] == 's') $mode += 04100;
+	 	else if ($permissions[3] == 'S') $mode += 04000;
+	
+	 	if ($permissions[4] == 'r') $mode += 040;
+	 	if ($permissions[5] == 'w' || ($filterForStat && $permissions[2] == 'w')) $mode += 020;
+	 	if ($permissions[6] == 'x' || ($filterForStat && $permissions[3] == 'x')) $mode += 010;
+	 	else if ($permissions[6] == 's') $mode += 02010;
+	 	else if ($permissions[6] == 'S') $mode += 02000;
+	
+	 	if ($permissions[7] == 'r') $mode += 04;
+	 	if ($permissions[8] == 'w' || ($filterForStat && $permissions[2] == 'w')) $mode += 02;
+	 	if ($permissions[9] == 'x' || ($filterForStat && $permissions[3] == 'x')) $mode += 01;
+	 	else if ($permissions[9] == 't') $mode += 01001;
+	 	else if ($permissions[9] == 'T') $mode += 01000;	
+	 	
+		if($permissions[0] != "d") {
+			$mode += 0100000;
+		}else{
+			$mode += 0040000;
+		}
+	 	
+		$mode = (string)("0".$mode);	
+		return  $mode;
+	}
+	
 }
 
 ?>

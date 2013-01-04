@@ -153,7 +153,8 @@
 				<serverCallback methodName="switchAction"></serverCallback>
 				</processing>
 		</action>
-		<action name="compress">
+		<!--
+<action name="compress">
 			<gui text="313" title="314" src="archive_insert.png" accessKey="" hasAccessKey="false">
 				<context selection="true" dir="" recycle="false"
 					actionBar="false" contextMenu="true" infoPanel="true"
@@ -345,6 +346,7 @@
 				<serverCallback methodName="switchAction"></serverCallback>
 				</processing>
 		</action>
+-->
 		<action name="ajxp_link">
 			<gui text="369" title="369" src="ajxp-link.png" hasAccessKey="false">
 				<context selection="true" dir="" recycle="false" actionBar="false" actionBarGroup="get" contextMenu="true" infoPanel="true"/>
