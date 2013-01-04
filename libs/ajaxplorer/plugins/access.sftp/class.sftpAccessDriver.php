@@ -239,7 +239,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 				// SFTP Connection Closure
 				$this->close();
 			break;
-						
+									
 			//------------------------------------
 			//	CREER UN REPERTOIRE / CREATE DIR
 			//------------------------------------
@@ -323,33 +323,42 @@ class sftpAccessDriver extends AbstractAccessDriver
 					throw new AJXP_Exception("No sftpLink.");
 				}
 				
-				if($selection->isEmpty())
-				{
+				if($selection->isEmpty()){
 					throw new AJXP_Exception("", 113);
 				}
-				$logMessages = array();
-				foreach ($selection->getFiles() as $fileToDelete) {
+				
+				$logMessage = array();
+				foreach ($selection->getFiles() as $fileToDelete){
+					// correction of initial "/"
 					$fileToDelete = preg_replace('/^\//', '', $fileToDelete);
-					if(!file_exists($fileToDelete))
-					{
-						$logMessages[]=$mess[100]." ".SystemTextEncoding::toUTF8($fileToDelete);
-						continue;
+					if($fileToDelete == "" || $fileToDelete == DIRECTORY_SEPARATOR){
+						return $mess[120];
 					}
-					$errorMessage = $this->sftpLink->delete($fileToDelete,true);
-					if(is_dir($fileToDelete))
-					{
-						$logMessages[]="$mess[38] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
+				   /** BUG de reconnaissance
+					*
+					* if(!file_exists($fileToDelete))
+					* {
+					* 	$logMessage[]=$mess[100]." ".SystemTextEncoding::toUTF8($fileToDelete);
+					* 	continue;
+					* }
+					*/
+					if($fileToDelete == $this->repository->getOption("RECYCLE_BIN")){
+						// DELETING FROM RECYCLE
+						RecycleBinManager::deleteFromRecycle($location);
 					}
-					else 
-					{
-						$logMessages[]="$mess[34] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
+					
+					$this->sftpLink->delete($fileToDelete,true) ==1 ? $errorMessage = '' : $errorMessage = 'Fichier '.$fileToDelete.' impossible a supprimer';
+					if(is_dir($fileToDelete) && $fileToDelete !=".." && $fileToDelete !="."){
+						$logMessage[]="$mess[38] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
+					} else {
+						$logMessage[]="$mess[34] ".SystemTextEncoding::toUTF8($fileToDelete)." $mess[44].";
 					}										
 				}
 				
-				if(count($logMessages)) $logMessages = join("\n", $logMessages);				
-				if($errorMessage) throw new AJXP_Exception(SystemTextEncoding::toUTF8($errorMessage));
+				if(count($logMessage)) $logMessage = join("\n", $logMessage);				
+				if($errorMessage!='') throw new AJXP_Exception(SystemTextEncoding::toUTF8($errorMessage));
 				
-				AJXP_Controller::applyHook("node.change", array(new AJXP_Node($fileToDelete)));
+				//AJXP_Controller::applyHook("node.change", array(new AJXP_Node($fileToDelete)));
 				AJXP_Logger::logAction("Delete", array("files"=>$selection));
 				$reloadContextNode = true;
 				
@@ -367,6 +376,7 @@ class sftpAccessDriver extends AbstractAccessDriver
 				if ( !$this->sftpLink ){
 					throw new AJXP_Exception("No sftpLink.");
 				}
+				
 				// need to correct $file and $filename_new vars (remove first / in path) only for sftp
 				$file = AJXP_Utils::decodeSecureMagic($httpVars["file"]);
 				$file = preg_replace('/^\//', '', $file);
@@ -381,6 +391,72 @@ class sftpAccessDriver extends AbstractAccessDriver
 
 				// SFTP Connection Closure
 				$this->close();
+			break;
+			
+			//------------------------------------
+			//	COPY / MOVE
+			//------------------------------------
+			case "copy";
+			case "move";
+			
+				// SFTP Connection
+				$this->connect();
+				if ( !$this->sftpLink ){
+					throw new AJXP_Exception("No sftpLink.");
+				}
+				
+				if($selection->isEmpty()){
+					throw new AJXP_Exception("", 113);
+				}
+				$successMessage = $errorMessage = array();
+				
+				// Destination folder init and check
+				$dest = AJXP_Utils::decodeSecureMagic($httpVars["dest"]);
+				$this->filterUserSelectionToHidden(array($httpVars["dest"]));
+				$dest !='/' ? $dest = preg_replace('/^\//', '', $dest) : $dest ="~/.";
+				/*
+				* Check à faire sur caractère écrisible du dossier destination
+				* if(!$this->isWriteable($dest))
+				* {
+				* 	$error[] = $mess[38]." ".$dest." ".$mess[99];
+				* 	return ;
+				* }
+				*/
+				
+				// Copy or move + errorlogs
+				/*
+				* Check à faire sur contenu d'une archive type zip facilement lisible 
+				* if($selection->inZip()){
+				* 	// Set action to copy anycase (cannot move from the zip).
+				* 	$action = "copy";
+				* 	$this->extractArchive($dest, $selection, $error, $success);
+				* } else {
+				*/
+				foreach ($selection->getFiles() as $fileToMove){
+					// correction of initial "/" in filename
+					$fileToMove = preg_replace('/^\//', '', $fileToMove);
+					if ($action == "move"){
+						$this->sftpLink->exec('mv '.$fileToMove.' '.$dest) == '' ? $successMessage[] = 'Fichier '.$fileToMove.' déplacé avec succès vers '.$dest : $errorMessage[] = 'Fichier '.$fileToMove.' impossible à déplacer vers '.$dest;
+					} else {
+						$this->sftpLink->exec('cp '.$fileToMove.' '.$dest) == '' ? $successMessage[] = 'Fichier '.$fileToMove.' copié avec succès vers '.$dest : $errorMessage[] = 'Fichier '.$fileToMove.' impossible à copier vers '.$dest;
+					}
+				}
+				/*
+				}
+				*/
+				if(count($errorMessage)){					
+					throw new AJXP_Exception(SystemTextEncoding::toUTF8(join("\n", $errorMessage)));
+				} else {
+					$logMessage = join("\n", $successMessage);
+					AJXP_Logger::logAction(($action=="move"?"Move":"Copy"), array("files"=>$selection, "destination"=>$dest));
+				}
+				// Don't know if it's necessary but correction back in time for $dest / 
+				$dest !='~/.' ? $dest = '/'.$dest : $dest ='/';
+				$reloadContextNode = true;
+                if(!(RecycleBinManager::getRelativeRecycle() == $dest && $this->driverConf["HIDE_RECYCLE"] == true)){
+                    $reloadDataNode = $dest;
+                }
+
 			break;
 		
 		}
@@ -518,6 +594,11 @@ class sftpAccessDriver extends AbstractAccessDriver
 			}
 			*/
 		}
+	}
+	
+	public function isWriteable($dir)
+	{
+		return is_writable($dir);
 	}
 }
 
